@@ -15,23 +15,67 @@ Comments and code in this file are used for describing and explaining a particul
 -->
 
 +++
-title = ""
-description = ""
+title = "TCP/IP Networking"
+description = "How to communicate at TCP/IP level in Go"
 author = "Christoph Berger"
 email = "chris@appliedgo.net"
-date = "2016-00-00"
-publishdate = "2016-00-00"
+date = "2017-01-24"
+publishdate = "2017-01-24"
 draft = "true"
-domains = [""]
-tags = ["", "", ""]
+domains = ["Distributed Computing"]
+tags = ["network", "tcp"]
 categories = ["Tutorial"]
 +++
 
-### Summary goes here
+Connecting two processes at TCP/IP level might seem scary at first, but in Go
+it is easier as one might think.
 
 <!--more-->
 
-## Intro goes here
+While preparing another blog post, I realized that the networking part of the
+code was quickly becoming larger than the part of the code that was meant to
+illustrate the topic of the post. Furthermore, networking in Go at TCP/IP
+level feels a little underrepresented in the Go blog space (but I might be
+wrong). 
+
+## Who needs sending things at TCP/IP level?
+
+Granted, many, if not most, scenarios, undoubtedly do better with a higher-level
+network protocol that hides all the technical details beneath a fancy API. 
+And there are already plenty to choose from, depending on the needs: 
+Message queue protocols, gRPC, protobuf, FlatBuffers, RESTful Web API's, WebSockets, and so on.
+
+However, in some situations--especially with small projects--, any approach
+you choose may look like completely oversized, not to mention the additional
+package dependencies that you'd have to introduce. 
+
+Luckily, creating simple network communication with the standard `net` package
+is not as difficult as it may seem.
+
+
+## Simplification #1: connections are io streams
+
+The `net.Conn` interface implements the `io.Reader`, `io.Writer`, and `io.Closer`
+interfaces. Hence you can use a TCP connection like any `io` stream. 
+
+I know what you think -- "Ok, so I can send strings or byte slices over a
+TCP connection. That's nice but what about complex data types? Structs and such?"
+
+
+## Simplification #2: Go knows how to encode complex types efficiently
+
+When it comes to encoding structured data for sending over the net, JSON comes
+readily to mind. But wait - Go's standard `encoding/gob` package provides
+a way of serializing and deserializing Go data types without the need for 
+adding string tags to structs, dealing with JSON/Go incompatibilites, or waiting 
+for json.Unmarshal to laboriously parse text into binary data. 
+
+Gob encoders and decoders work directly on `io` streams - and this fits just
+nicely into our simplification #1 - connections are `io` streams. 
+
+Let's put this all together in a small sample app. 
+
+
 
 ## The code
 
@@ -58,12 +102,21 @@ import (
 	"github.com/pkg/errors"
 
 	"flag"
+	"encoding/gob"
+	"github.com/syncthing/syncthing/internal/beacon"
+	"github.com/syndtr/goleveldb/leveldb"
 )
 
-var (
-	RemoteNode *net.Addr
-	Addr       *net.Addr
-	Port       int
+// A struct with a mix of fields, used for the GOB example.
+type complexData struct {
+	N int
+	S string
+	M map[string]int
+}
+
+const (
+	// Port is the port number to listen to.
+	Port = 61000
 )
 
 /* Using an outgoing connection is a snap. A `net.Conn` satisfies the io.Reader
@@ -71,47 +124,50 @@ and `io.Writer` interfaces, so we can treat a TCP connection just like any other
 `Reader` or `Writer`.
 */
 
-// Open connects to a node's TCP Address.
+// Open connects to a TCP Address.
 // It returns a TCP connection wrapped into a buffered reader.
 // To close the connection, call the reader's
 // Close method.
-func (node *Node) Open() (io.Reader, error) {
-	conn, err := net.DialTCP("tcp", Addr, node.addr)
+func Open(addr *net.TCPAddr) (*bufio.ReadWriter, error) {
+	// Dial the remote process. The local address (second argument) can
+	// be nil, as the local port is chosen on the fly.
+	conn, err := net.DialTCP("tcp", nil, addr)
 	if err != nil {
-		return nil, errors.Wrap(err, "Dialing "+node.addr.String()+" failed")
+		return nil, errors.Wrap(err, "Dialing "+addr.String()+" failed")
 	}
-	return bufio.NewReader(conn), nil
+	return bufio.NewReadWriter(bufio.NewReader(conn), bufio.NewWriter(conn)), nil
 }
 
-/* Preparing for incoming data takes a bit more effort. According to our ad-hoc protocol,
-we receive the name of a request terminated by `\n`, followed by data. The nature of the data
-depends on the respective request. To handle this, we create an `Endpoint` object
-with the following properties:
+/* Preparing for incoming data is a bit more involved. According to our ad-hoc
+protocol, we receive the name of a request terminated by `\n`, followed by data.
+The nature of the data depends on the respective request. To handle this, we
+create an `Endpoint` object with the following properties:
 
-* It allows to register one or more handler functions, where each can handle
-a particular request.
+* It allows to register one or more handler functions, where each can handle a particular request.
 * It dispatches incoming requests to the associated handler based on the request name.
 
 */
 
 // HandleFunc is a function that handles incoming data.
-type HandleFunc func(*net.Conn) error
+type HandleFunc func(net.Conn) error
 
 // Endpoint provides an endpoint to other processess
 // that they can send data to.
 type Endpoint struct {
 	addr     net.Addr
-	listener *net.Listener
+	listener net.Listener
 	handler  map[string]HandleFunc
 }
 
 // NewEndpoint creates a new endpoint. Too keep things simple,
 // the endpoint listens on a fixed port number.
 func NewEndpoint() *Endpoint {
+	// Make a net.Addr from the local port number.
 	a, err := net.ResolveIPAddr("tcp", strconv.Itoa(Port))
 	if err != nil {
 		return &Endpoint{} // FIXME: 'New' functions don't return errors, but here we have one.
 	}
+	// Create a new Endpoint with an address and an empty list of handler funcs.
 	return &Endpoint{
 		addr:    a,
 		handler: map[string]HandleFunc{},
@@ -126,43 +182,135 @@ func (e *Endpoint) AddHandleFunc(name string, f HandleFunc) {
 // Listen starts listening on the endpoint port. At least one
 // handler function must have been added through AddHandleFunc() before.
 func (e *Endpoint) Listen() error {
-	e.listener = net.Listen("tcp")
+	var err error
+	e.listener, err = net.Listen("tcp", e.addr.String())
+	if err != nil {
+		log.Println("Unable to listen on "+e.addr.String()+"\n", err)
+	}
+	log.Println("Listening on", e.listener.Addr().String())
 	for {
 		conn, err := e.listener.Accept()
 		if err != nil {
 			log.Println("Failed accepting a connection request:", err)
 			continue
 		}
-		go dispatch(conn)
+		go e.dispatch(conn)
 	}
-	return nil
 }
 
 // dispatch reads the connection up to the first newline.
 // Based on this string, it calls the appropriate HandlerFunc.
-func (e *Endpoint) dispatch(c *net.Conn) {
+func (e *Endpoint) dispatch(conn net.Conn) {
+	// Close the connection when the handler func finishes
+	// or when an error occurs.
 	defer conn.Close()
 	// Wrap the connection into a buffered reader for easier reading.
-	r := bufio.NewReader(conn)
+	rw := bufio.NewReadWriter(bufio.NewReader(conn), bufio.NewWriter(conn))
 	// Read the request.
-	request, err := r.ReadString('\n')
+	request, err := rw.ReadString('\n')
 	if err != nil {
 		log.Println("Error reading command. Got: '"+request+"'\n", err)
 	}
+	log.Println("Received request '" + request + "'")
 	// Call the appropriate handler function.
-	e.handler[request](r)
+	e.handler[request](conn)
 }
 
-/* Now let's create two handler functions. The easiest case is where our ad-hoc protocol only
-sends string data.
+/* Now let's create two handler functions. The easiest case is where our
+ad-hoc protocol only sends string data.
 
 The second handler receives and processes a struct that was send as GOB data.
 */
 
+// handleStrings handles the "STRING" request.
+func handleStrings(conn net.Conn) {
+	// Receive a string.
+	r := bufio.NewReader(conn)
+	s, err := r.ReadString('\n')
+	if err != nil {
+		log.Println("Cannot create Reader from connection.\n", err)
+	}
+	log.Println("Received STRING message:", s)
+	w := bufio.NewWriter(conn)
+	_, err = w.WriteString("Thank you.\n")
+	if err != nil {
+		log.Println("Cannot write to connection.\n", err)
+	}
+}
+
+// handleGob handles the "GOB" request. It decodes the received GOB data
+// into a struct.
+func handleGob(conn net.Conn) {
+	r := bufio.NewReader(conn)
+	// We need a decoder.
+	dec := gob.NewDecoder(r)
+	dec.Decode(e interface{})
+	
+
+}
+
+
+/* With all this in place, we can now set up client and server functions.
+
+The client function connects to the server and sends STRING and GOB requests.
+
+The server starts listening for requests and triggers the appropriate handlers.
+*/
+
+// client is called if the app is called with -connect=`ip addr`.
+func client(ip string) {
+	// Some test data.
+	testStruct := complexData{
+		N: 23,
+		S: "string data", 
+		M: map[string]int{ "one": 1, "two": 2, "three": 3}
+	}
+
+	// Create a TCPAddr from the ip string passed as -connect flag.
+	addr, err := net.ResolveTCPAddr("tcp", ip)
+	if err != nil {
+		return errors.Wrap(err, "Client: Cannot resolve address "+ ip + "\n")
+	}
+
+	// Open a connection to the server.
+	rw, err := Open(addr)
+	if err != nil {
+		return errors.Wrap(err, "Client: Failed to open connection to "+addr.String())
+	}
+
+	// Send a STRING request.
+	// Send the request name.
+	// Send the data.
+	log.Println("Sending the string request.")
+	rw.WriteString("STRING\n")
+	rw.WriteString("Additional data.\n")
+
+	// Read the reply.
+	response := rw.ReadString('\n')
+	log.Println("STRING request: got a response:", response)
+
+	// Send a GOB request.
+	// Create an encoder that directly transmits to `rw`.
+	// Send the request name.
+	// Send the GOB.
+	log.Println("Sending a struct as GOB.")
+	enc := gob.NewEncoder(rw)
+	rw.WriteString("GOB\n")
+	enc.Encode(testStruct)
+
+	
+
+}
+
 // main
 func main() {
-	join := flag.String("join", "", "IP address of process to join. If empty, go into listen mode.")
-	endpoint := NewTCPEndpoint()
-	nodes := Nodes{}
+	connect := flag.String("connect", "", "IP address of process to join. If empty, go into listen mode.")
+	endpoint := NewEndpoint()
+
+	// Add the handle funcs.
+	endpoint.AddHandleFunc("STRING", handleStrings)
+
+	// Start listening.
+	endpoint.Listen()
 
 }
