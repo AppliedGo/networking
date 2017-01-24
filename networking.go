@@ -567,7 +567,6 @@ run the client.
     go run networking.go -connect localhost
 
 
-
 Happy coding!
 
 */
