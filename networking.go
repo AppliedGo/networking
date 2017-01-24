@@ -43,20 +43,23 @@ wrong).
 Granted, many, if not most, scenarios, undoubtedly do better with a higher-level
 network protocol that hides all the technical details beneath a fancy API.
 And there are already plenty to choose from, depending on the needs:
-Message queue protocols, gRPC, protobuf, FlatBuffers, RESTful Web API's, WebSockets, and so on.
+Message queue protocols, gRPC, protobuf, FlatBuffers, RESTful Web API's,
+WebSockets, and so on.
 
 However, in some situations--especially with small projects--, any approach
 you choose may look like completely oversized, not to mention the additional
 package dependencies that you'd have to introduce.
 
-Luckily, creating simple network communication with the standard `net` package
+Luckily, creating simple network communication with
+[the standard `net` package](https://golang.org/pkg/net/)
 is not as difficult as it may seem.
 
 
 ## Simplification #1: connections are io streams
 
-The `net.Conn` interface implements the `io.Reader`, `io.Writer`, and `io.Closer`
-interfaces. Hence you can use a TCP connection like any `io` stream.
+The `net.Conn` interface implements [the `io.Reader`, `io.Writer`, and `io.Closer`
+interfaces](https://golang.org/pkg/io/). Hence you can use a TCP connection
+like any `io` stream.
 
 I know what you think -- "Ok, so I can send strings or byte slices over a
 TCP connection. That's nice but what about complex data types? Structs and such?"
@@ -115,6 +118,22 @@ and benefit from the various `ReadWriter` methods like `ReadString()`, `ReadByte
 Finally, each connection object has a `Close()` method to conclude the
 communication.
 
+### Fine tuning the client
+
+A couple of tuning options are also available. Some examples:
+
+The `Dialer` interface provides these options (among others):
+
+* a `DualStack` option to switch between IPv4 and IPv6 if one of the address
+  families is broken *and* if the target host name resolves to both address
+  families;
+* `DeadLine` and `Timeout` options for timing out an unsuccessful dial;
+* a `KeepAlive` option for managing the life span of the connection
+
+The `Conn` interface also has deadline settings; either for the connection as
+a whole (`SetDeadLine()`) or specific to read or write calls (`SetReadDeadLine()`
+and `SetWriteDeadLine()`).
+
 
 ### On the receiving side
 
@@ -131,6 +150,10 @@ provides a standard service, it uses the port associated with that service.
 For example, Web servers usually listen on port 80 for HTTP requests and
 on port 443 for HTTPS requests. SSH daemons listen on port 22 by default,
 and a WHOIS server uses port 43.
+
+Here is what we need from the `net` package:
+
+
 
 ## The code
 
@@ -183,6 +206,7 @@ and `io.Writer` interfaces, so we can treat a TCP connection just like any other
 func Open(addr *net.TCPAddr) (*bufio.ReadWriter, error) {
 	// Dial the remote process. The local address (second argument) can
 	// be nil, as the local port is chosen on the fly.
+	log.Println("Dial " + addr.String())
 	conn, err := net.DialTCP("tcp", nil, addr)
 	if err != nil {
 		return nil, errors.Wrap(err, "Dialing "+addr.String()+" failed")
@@ -245,13 +269,15 @@ func (e *Endpoint) Listen() error {
 	if err != nil {
 		return errors.Wrap(err, "Unable to listen on "+e.addr.String()+"\n")
 	}
-	log.Println("Listening on", e.listener.Addr().String())
+	log.Println("Listen on", e.listener.Addr().String())
 	for {
+		log.Println("Accept a request.")
 		conn, err := e.listener.Accept()
 		if err != nil {
 			log.Println("Failed accepting a connection request:", err)
 			continue
 		}
+		log.Println("Dispatch a request.")
 		go e.dispatch(conn)
 	}
 }
@@ -266,13 +292,15 @@ func (e *Endpoint) dispatch(conn net.Conn) {
 	// Wrap the connection into a buffered reader for easier reading.
 	rw := bufio.NewReadWriter(bufio.NewReader(conn), bufio.NewWriter(conn))
 	// Read the request.
+	log.Print("Receive request '")
 	request, err := rw.ReadString('\n')
 	if err != nil {
-		log.Println("Error reading command. Got: '"+request+"'\n", err)
+		log.Println("\nError reading command. Got: '"+request+"'\n", err)
+		return
 	}
-	log.Println("Received request '" + request + "'")
+	log.Println(request + "'")
 	// Call the appropriate handler function.
-	e.handler[request](conn)
+	e.handler[request](rw)
 }
 
 /* Now let's create two handler functions. The easiest case is where our
@@ -282,16 +310,15 @@ The second handler receives and processes a struct that was send as GOB data.
 */
 
 // handleStrings handles the "STRING" request.
-func handleStrings(conn net.Conn) {
+func handleStrings(rw bufio.ReadWriter) {
 	// Receive a string.
-	r := bufio.NewReader(conn)
-	s, err := r.ReadString('\n')
+	log.Print("Receive STRING message:")
+	s, err := rw.ReadString('\n')
 	if err != nil {
-		log.Println("Cannot create Reader from connection.\n", err)
+		log.Println("Cannot read from connection.\n", err)
 	}
-	log.Println("Received STRING message:", s)
-	w := bufio.NewWriter(conn)
-	_, err = w.WriteString("Thank you.\n")
+	log.Println(s)
+	_, err = rw.WriteString("Thank you.\n")
 	if err != nil {
 		log.Println("Cannot write to connection.\n", err)
 	}
@@ -299,18 +326,17 @@ func handleStrings(conn net.Conn) {
 
 // handleGob handles the "GOB" request. It decodes the received GOB data
 // into a struct.
-func handleGob(conn net.Conn) {
+func handleGob(rw bufio.ReadWriter) {
+	log.Print("Receive GOB data:")
 	var data complexData
-	r := bufio.NewReader(conn)
 	// Create a decoder that decodes directly into a struct variable.
-	dec := gob.NewDecoder(r)
+	dec := gob.NewDecoder(rw)
 	err := dec.Decode(&data)
 	if err != nil {
 		log.Println("Error decoding GOB data:", err)
 		return
 	}
-	log.Printf("Received GOB data:\n%#v\n", data)
-
+	log.Printf("\n%#v\n", data)
 }
 
 /* With all this in place, we can now set up client and server functions.
@@ -344,7 +370,7 @@ func client(ip string) error {
 	// Send a STRING request.
 	// Send the request name.
 	// Send the data.
-	log.Println("Sending the string request.")
+	log.Println("Send the string request.")
 	n, err := rw.WriteString("STRING\n")
 	if err != nil {
 		return errors.Wrap(err, "Could not send the STRING request ("+strconv.Itoa(n)+" bytes written)")
@@ -355,6 +381,7 @@ func client(ip string) error {
 	}
 
 	// Read the reply.
+	log.Println("Read the reply.")
 	response, err := rw.ReadString('\n')
 	if err != nil {
 		return errors.Wrap(err, "Client: Failed to read the reply: '"+response+"'")
@@ -366,7 +393,7 @@ func client(ip string) error {
 	// Create an encoder that directly transmits to `rw`.
 	// Send the request name.
 	// Send the GOB.
-	log.Println("Sending a struct as GOB.")
+	log.Println("Send a struct as GOB.")
 	enc := gob.NewEncoder(rw)
 	n, err = rw.WriteString("GOB\n")
 	if err != nil {
