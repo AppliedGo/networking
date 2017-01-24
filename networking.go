@@ -115,6 +115,11 @@ stream, as mentioned above. We can even wrap the connection into a `bufio.ReadWr
 and benefit from the various `ReadWriter` methods like `ReadString()`, `ReadBytes`,
 `WriteString`, etc.
 
+** There is just one important detail to consider. After writing to a network
+connection via a `bufio.Writer` wrapper, ensure to call the Writer's `Flush()`
+method so that all data is forwarded to the underlying network connection.**
+
+
 Finally, each connection object has a `Close()` method to conclude the
 communication.
 
@@ -175,6 +180,7 @@ import (
 	"log"
 	"net"
 	"strconv"
+	"strings"
 
 	"github.com/pkg/errors"
 
@@ -226,34 +232,24 @@ create an `Endpoint` object with the following properties:
 
 */
 
-// HandleFunc is a function that handles incoming data.
-type HandleFunc func(net.Conn)
+// HandleFunc is a function that handles an incoming request.
+// It receives the open connection wrapped in a `ReadWriter` interface.
+type HandleFunc func(*bufio.ReadWriter)
 
 // Endpoint provides an endpoint to other processess
 // that they can send data to.
 type Endpoint struct {
-	addr     net.Addr
 	listener net.Listener
 	handler  map[string]HandleFunc
 }
 
 // NewEndpoint creates a new endpoint. Too keep things simple,
 // the endpoint listens on a fixed port number.
-func NewEndpoint() (*Endpoint, error) {
-	// Make a net.Addr from the local port number.
-	hostAddrs, err := net.LookupHost("localhost")
-	if err != nil {
-		return nil, errors.Wrap(err, "Cannot determine this machine's IP addresses")
-	}
-	a, err := net.ResolveTCPAddr("tcp", net.JoinHostPort(hostAddrs[0], strconv.Itoa(Port)))
-	if err != nil {
-		return nil, errors.Wrap(err, "Error resolving IP address for new Endpoint")
-	}
-	// Create a new Endpoint with an address and an empty list of handler funcs.
+func NewEndpoint() *Endpoint {
+	// Create a new Endpoint with an empty list of handler funcs.
 	return &Endpoint{
-		addr:    a,
 		handler: map[string]HandleFunc{},
-	}, nil
+	}
 }
 
 // AddHandleFunc adds a new function for handling incoming data.
@@ -261,13 +257,14 @@ func (e *Endpoint) AddHandleFunc(name string, f HandleFunc) {
 	e.handler[name] = f
 }
 
-// Listen starts listening on the endpoint port. At least one
-// handler function must have been added through AddHandleFunc() before.
+// Listen starts listening on the endpoint port on all interfaces.
+// At least one handler function must have been added
+// through AddHandleFunc() before.
 func (e *Endpoint) Listen() error {
 	var err error
-	e.listener, err = net.Listen("tcp", e.addr.String())
+	e.listener, err = net.Listen("tcp", ":"+strconv.Itoa(Port))
 	if err != nil {
-		return errors.Wrap(err, "Unable to listen on "+e.addr.String()+"\n")
+		return errors.Wrap(err, "Unable to listen on "+e.listener.Addr().String()+"\n")
 	}
 	log.Println("Listen on", e.listener.Addr().String())
 	for {
@@ -298,9 +295,17 @@ func (e *Endpoint) dispatch(conn net.Conn) {
 		log.Println("\nError reading command. Got: '"+request+"'\n", err)
 		return
 	}
+	// Important step: trim the request string - ReadString does not strip
+	// any newlines.
+	request = strings.Trim(request, "\n ")
 	log.Println(request + "'")
 	// Call the appropriate handler function.
-	e.handler[request](rw)
+	hfunc, ok := e.handler[request]
+	if !ok {
+		log.Println("Request '" + request + "' does not match any registered handler.")
+		return
+	}
+	hfunc(rw)
 }
 
 /* Now let's create two handler functions. The easiest case is where our
@@ -310,7 +315,7 @@ The second handler receives and processes a struct that was send as GOB data.
 */
 
 // handleStrings handles the "STRING" request.
-func handleStrings(rw bufio.ReadWriter) {
+func handleStrings(rw *bufio.ReadWriter) {
 	// Receive a string.
 	log.Print("Receive STRING message:")
 	s, err := rw.ReadString('\n')
@@ -322,11 +327,15 @@ func handleStrings(rw bufio.ReadWriter) {
 	if err != nil {
 		log.Println("Cannot write to connection.\n", err)
 	}
+	err = rw.Flush()
+	if err != nil {
+		log.Println("Flush failed.", err)
+	}
 }
 
 // handleGob handles the "GOB" request. It decodes the received GOB data
 // into a struct.
-func handleGob(rw bufio.ReadWriter) {
+func handleGob(rw *bufio.ReadWriter) {
 	log.Print("Receive GOB data:")
 	var data complexData
 	// Create a decoder that decodes directly into a struct variable.
@@ -379,6 +388,11 @@ func client(ip string) error {
 	if err != nil {
 		return errors.Wrap(err, "Could not send additional STRING data ("+strconv.Itoa(n)+" bytes written)")
 	}
+	log.Println("Flush the buffer.")
+	err = rw.Flush()
+	if err != nil {
+		return errors.Wrap(err, "Flush failed.")
+	}
 
 	// Read the reply.
 	log.Println("Read the reply.")
@@ -399,16 +413,21 @@ func client(ip string) error {
 	if err != nil {
 		return errors.Wrap(err, "Could not write GOB data ("+strconv.Itoa(n)+" bytes written)")
 	}
-	return enc.Encode(testStruct)
+	err = enc.Encode(testStruct)
+	if err != nil {
+		return errors.Wrapf(err, "Encode failed for struct: %#v", testStruct)
+	}
+	err = rw.Flush()
+	if err != nil {
+		return errors.Wrap(err, "Flush failed.")
+	}
+	return nil
 }
 
 // server listens for incoming requests and dispatches them to
 // registered handler functions.
 func server() error {
-	endpoint, err := NewEndpoint()
-	if err != nil {
-		return errors.Wrap(err, "Cannot create endpoint")
-	}
+	endpoint := NewEndpoint()
 
 	// Add the handle funcs.
 	endpoint.AddHandleFunc("STRING", handleStrings)
@@ -445,3 +464,30 @@ func main() {
 func init() {
 	log.SetFlags(log.Lshortfile)
 }
+
+/*
+## How to get and run the codes
+
+Step 1: `go get` the code. Note the `-d` flag that prevents auto-installing
+the binary into `$GOPATH/bin`.
+
+    go get -d github.com/appliedgo/networking
+
+Step 2: `cd` to the source code directory.
+
+    cd $GOPATH/github.com/appliedgo/networking
+
+Step 3. Run the server.
+
+    go run networking.go
+
+Step 4. Open another shell, `cd` to the source code (see Step 2), and
+run the client.
+
+    go run networking.go -connect localhost
+
+
+
+Happy coding!
+
+*/
