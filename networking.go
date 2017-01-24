@@ -66,8 +66,7 @@ TCP connection. That's nice but what about complex data types? Structs and such?
 
 *(Fun fact: About every other time I review this text on the rendered Web page,
 I misread the title as "God knows...".
-So if this just happened to you,
-you are not alone :-)*
+So if this just happened to you, you are not alone :-)*
 
 When it comes to encoding structured data for sending over the net, JSON comes
 readily to mind. But wait - Go's standard `encoding/gob` package provides
@@ -99,10 +98,23 @@ Sending strings requires three simple steps.
 
 The `net` package provides a couple of methods for this.
 
-```go
+`ResolveTCPAddr()` takes a string representing a TCP address (like, for example,
+`localhost:80`, `127.0.0.1:80`, or `[::1]:80`, which all represent port #80 on
+the local machine) and returns a `net.TCPAddr` (or an error if the string
+cannot be resolved to a valid TCP address).
 
+`DialTCP()` takes a `net.TCPAddr` and connects to this address. It returns
+the open connection as a `net.TCPConn` object (or an error if the connection
+attempt fails).
 
-```
+From this point onwards, we can tread the connection like any other input/output
+stream, as mentioned above. We can even wrap the connection into a `bufio.ReadWriter`
+and benefit from the various `ReadWriter` methods like `ReadString()`, `ReadBytes`,
+`WriteString`, etc.
+
+Finally, each connection object has a `Close()` method to conclude the
+communication.
+
 
 ### On the receiving side
 
@@ -113,7 +125,12 @@ The receiver has to follow these steps.
 3. In the goroutine, read the data. Optionally, send a response.
 4. Close the connection.
 
-
+Listening requires a local port to listen to. Typically, the listening
+application (a.k.a. "server") announces the port it listens to, or if it
+provides a standard service, it uses the port associated with that service.
+For example, Web servers usually listen on port 80 for HTTP requests and
+on port 443 for HTTPS requests. SSH daemons listen on port 22 by default,
+and a WHOIS server uses port 43.
 
 ## The code
 
