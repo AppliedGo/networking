@@ -64,6 +64,11 @@ TCP connection. That's nice but what about complex data types? Structs and such?
 
 ## Simplification #2: Go knows how to encode complex types efficiently
 
+*(Fun fact: About every other time I review this text on the rendered Web page,
+I misread the title as "God knows...".
+So if this just happened to you,
+you are not alone :-)*
+
 When it comes to encoding structured data for sending over the net, JSON comes
 readily to mind. But wait - Go's standard `encoding/gob` package provides
 a way of serializing and deserializing Go data types without the need for
@@ -74,6 +79,39 @@ Gob encoders and decoders work directly on `io` streams - and this fits just
 nicely into our simplification #1 - connections are `io` streams.
 
 Let's put this all together in a small sample app.
+
+## Goal
+
+The sample app shall do two things:
+
+1. Send and receive a simple message as a string
+2. Send and receive a `struct` via GOB
+
+## Basic ingredients for sending string data over TCP
+
+### On the sending side
+
+Sending strings requires three simple steps.
+
+1. Open a connection to the receiving process
+2. Write the string
+3. Close the connection
+
+The `net` package provides a couple of methods for this.
+
+```go
+
+
+```
+
+### On the receiving side
+
+The receiver has to follow these steps.
+
+1. Start listening on a local port.
+2. When a request comes in, spawn a goroutine to handle the request.
+3. In the goroutine, read the data. Optionally, send a response.
+4. Close the connection.
 
 
 
@@ -122,9 +160,9 @@ and `io.Writer` interfaces, so we can treat a TCP connection just like any other
 */
 
 // Open connects to a TCP Address.
-// It returns a TCP connection wrapped into a buffered reader.
-// To close the connection, call the reader's
-// Close method.
+// It returns a TCP connection armed with a timeout and wrapped into a
+// buffered reader.
+// To close the connection, call the reader's Close method.
 func Open(addr *net.TCPAddr) (*bufio.ReadWriter, error) {
 	// Dial the remote process. The local address (second argument) can
 	// be nil, as the local port is chosen on the fly.
@@ -140,8 +178,10 @@ protocol, we receive the name of a request terminated by `\n`, followed by data.
 The nature of the data depends on the respective request. To handle this, we
 create an `Endpoint` object with the following properties:
 
-* It allows to register one or more handler functions, where each can handle a particular request.
-* It dispatches incoming requests to the associated handler based on the request name.
+* It allows to register one or more handler functions, where each can handle a
+  particular request.
+* It dispatches incoming requests to the associated handler based on the request
+  name.
 
 */
 
@@ -164,7 +204,7 @@ func NewEndpoint() (*Endpoint, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "Cannot determine this machine's IP addresses")
 	}
-	a, err := net.ResolveIPAddr("ip", net.JoinHostPort(hostAddrs[0], strconv.Itoa(Port)))
+	a, err := net.ResolveTCPAddr("tcp", net.JoinHostPort(hostAddrs[0], strconv.Itoa(Port)))
 	if err != nil {
 		return nil, errors.Wrap(err, "Error resolving IP address for new Endpoint")
 	}
@@ -343,7 +383,7 @@ func main() {
 	if *connect != "" {
 		err := client(*connect)
 		if err != nil {
-			log.Println("Error:", err)
+			log.Println("Error:", errors.WithStack(err))
 		}
 		log.Println("Client done.")
 		return
@@ -352,7 +392,7 @@ func main() {
 	// Else go into server mode.
 	err := server()
 	if err != nil {
-		log.Println("Error:", err)
+		log.Println("Error:", errors.WithStack(err))
 	}
 
 	log.Println("Server done.")
