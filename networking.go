@@ -89,6 +89,17 @@ The sample app shall do two things:
 1. Send and receive a simple message as a string
 2. Send and receive a `struct` via GOB
 
+The first part--sending simple strings--shall demonstrate how easy it is
+to send data over a TCP/IP network without any higher-level protocols.
+
+The second part goes a step further and sends a complete struct over the
+network, with strings, slices, maps, and even a recursive pointer to the
+struct itself:
+
+HYPE[Sending a struct as GOB](gob.html)
+
+The `gob` package makes this as easy as pie.
+
 ## Basic ingredients for sending string data over TCP
 
 ### On the sending side
@@ -201,6 +212,7 @@ connection without any fuss.
 
 
 
+
 */
 
 // ## Imports and globals
@@ -230,11 +242,14 @@ type complexData struct {
 }
 
 const (
-	// Port is the port number to listen to.
+	// Port is the port number that the server listens to.
 	Port = ":61000"
 )
 
-/* Using an outgoing connection is a snap. A `net.Conn` satisfies the io.Reader
+/*
+## Outcoing connections
+
+Using an outgoing connection is a snap. A `net.Conn` satisfies the io.Reader
 and `io.Writer` interfaces, so we can treat a TCP connection just like any other
 `Reader` or `Writer`.
 */
@@ -254,19 +269,22 @@ func Open(addr string) (*bufio.ReadWriter, error) {
 	return bufio.NewReadWriter(bufio.NewReader(conn), bufio.NewWriter(conn)), nil
 }
 
-/* Preparing for incoming data is a bit more involved. According to our ad-hoc
-protocol, we receive the name of a request terminated by `\n`, followed by data.
-The nature of the data depends on the respective request. To handle this, we
+/*
+## Incoming connections
+
+Preparing for incoming data is a bit more involved. According to our ad-hoc
+protocol, we receive the name of a command terminated by `\n`, followed by data.
+The nature of the data depends on the respective command. To handle this, we
 create an `Endpoint` object with the following properties:
 
 * It allows to register one or more handler functions, where each can handle a
-  particular request.
-* It dispatches incoming requests to the associated handler based on the request
+  particular command.
+* It dispatches incoming commands to the associated handler based on the commands
   name.
 
 */
 
-// HandleFunc is a function that handles an incoming request.
+// HandleFunc is a function that handles an incoming command.
 // It receives the open connection wrapped in a `ReadWriter` interface.
 type HandleFunc func(*bufio.ReadWriter)
 
@@ -313,8 +331,8 @@ func (e *Endpoint) Listen() error {
 	}
 }
 
-// dispatch reads the connection up to the first newline.
-// Based on this string, it calls the appropriate HandlerFunc.
+// handleMessages reads the connection up to the first newline.
+// Based on this string, it calls the appropriate HandleFunc.
 func (e *Endpoint) handleMessages(conn net.Conn) {
 	// Wrap the connection into a buffered reader for easier reading.
 	rw := bufio.NewReadWriter(bufio.NewReader(conn), bufio.NewWriter(conn))
@@ -391,7 +409,10 @@ func handleGob(rw *bufio.ReadWriter) {
 	log.Printf("Inner complexData struct: \n%#v\n", data.C)
 }
 
-/* With all this in place, we can now set up client and server functions.
+/*
+## The client and server functions
+
+With all this in place, we can now set up client and server functions.
 
 The client function connects to the server and sends STRING and GOB requests.
 
@@ -482,6 +503,18 @@ func server() error {
 	// Start listening.
 	return endpoint.Listen()
 }
+
+/*
+## Main
+
+Main starts either a client or a server, depending on whether the `connect`
+flag is set. Without the flag, the process starts as a server, listening
+for incoming requests. With the flag the process starts as a client and connects
+to the host specified by the flag value.
+
+Try "localhost" or "127.0.0.1" when running both processes on the same machine.
+
+*/
 
 // main
 func main() {
