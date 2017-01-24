@@ -110,34 +110,44 @@ cannot be resolved to a valid TCP address).
 the open connection as a `net.TCPConn` object (or an error if the connection
 attempt fails).
 
-From this point onwards, we can tread the connection like any other input/output
-stream, as mentioned above. We can even wrap the connection into a `bufio.ReadWriter`
-and benefit from the various `ReadWriter` methods like `ReadString()`, `ReadBytes`,
-`WriteString`, etc.
+If we don't need much fine-grained control over the Dial settings, we can use
+`net.Dial()` instead. This function takes an address string directly and
+returns a general `net.Conn` object. This is sufficient for our test case;
+however, if you need functionality that is only available on TCP connections,
+you have to use the "TCP" variants (`DialTCP`, `TCPConn`, `TCPAddr`, etc).
 
-** There is just one important detail to consider. After writing to a network
-connection via a `bufio.Writer` wrapper, ensure to call the Writer's `Flush()`
-method so that all data is forwarded to the underlying network connection.**
+After successful dialing, we can treat the new connection like any other
+input/output stream, as mentioned above. We can even wrap the connection into
+a `bufio.ReadWriter` and benefit from the various `ReadWriter` methods like
+`ReadString()`, `ReadBytes`, `WriteString`, etc.
 
+** Remember that buffered Writers need to call `Flush()` after writing,
+so that all data is forwarded to the underlying network connection.**
 
 Finally, each connection object has a `Close()` method to conclude the
 communication.
 
-### Fine tuning the client
+
+### Fine tuning
 
 A couple of tuning options are also available. Some examples:
 
 The `Dialer` interface provides these options (among others):
 
-* a `DualStack` option to switch between IPv4 and IPv6 if one of the address
-  families is broken *and* if the target host name resolves to both address
-  families;
 * `DeadLine` and `Timeout` options for timing out an unsuccessful dial;
 * a `KeepAlive` option for managing the life span of the connection
 
 The `Conn` interface also has deadline settings; either for the connection as
 a whole (`SetDeadLine()`) or specific to read or write calls (`SetReadDeadLine()`
 and `SetWriteDeadLine()`).
+
+Note that the deadlines are fixed points in (wallclock) time. Unlike timeouts,
+they don't reset after a new activity. Each activity on the connection must
+therefore set a new deadline.
+
+The sample code below uses no deadlines, as it is simple enough so that we can
+easily see when things get stuck. `Ctrl-C` is our manual "deadline trigger
+tool".
 
 
 ### On the receiving side
@@ -156,20 +166,41 @@ For example, Web servers usually listen on port 80 for HTTP requests and
 on port 443 for HTTPS requests. SSH daemons listen on port 22 by default,
 and a WHOIS server uses port 43.
 
-Here is what we need from the `net` package:
+The core parts of the `net` package for implementing the server side are:
 
+`net.Listen()` creates a new listener on a given local network address. If
+only a port ist passed, as in ":61000", then the listener listens on
+all available network interfaces. This is quite handy, as a computer usually
+has at least two active interfaces, the loopback interface and at least one
+real network card.
+
+A listener's `Accept()` method waits until a connection request comes in.
+Then it accepts the request and returns the new connection to the caller.
+`Accept()` is typically called within a loop to be able to serve multiple
+connnections simultaneously. Each connection can be handled by a goroutine,
+as we will see in the code.
 
 
 ## The code
 
-The two basic objects we need for TCP networking are:
+Instead of just pushing a few bytes around, I wanted the code to demonstrate
+something more useful. I want to be able to send different commands with
+different data payload to the server. The server shall identify each
+command and decode the command's data.
 
-* Information about the node(s) that we want to send data to, and
-* information about the socket on which we will be listening for incoming
-	connections.
+So the client in the code below sends two test commands: "STRING" and "GOB".
+Each are terminated by a newline.
 
-For brevity, we assume that we have only one other process to communicate with.
-}
+The STRING command includes one line of string
+data, which can be handled by simple read and write methods from `bufio`.
+
+The GOB command comes with a `struct` that contains a couple of fields,
+including a slice, a map, and a even a pointer to itself. As you can see when
+running the code, the `gob` package moves all this through our network
+connection without any fuss.
+
+
+
 */
 
 // ## Imports and globals
@@ -177,6 +208,7 @@ package main
 
 import (
 	"bufio"
+	"io"
 	"log"
 	"net"
 	"strconv"
@@ -193,11 +225,13 @@ type complexData struct {
 	N int
 	S string
 	M map[string]int
+	P []byte
+	C *complexData
 }
 
 const (
 	// Port is the port number to listen to.
-	Port = 61000
+	Port = ":61000"
 )
 
 /* Using an outgoing connection is a snap. A `net.Conn` satisfies the io.Reader
@@ -207,15 +241,15 @@ and `io.Writer` interfaces, so we can treat a TCP connection just like any other
 
 // Open connects to a TCP Address.
 // It returns a TCP connection armed with a timeout and wrapped into a
-// buffered reader.
-// To close the connection, call the reader's Close method.
-func Open(addr *net.TCPAddr) (*bufio.ReadWriter, error) {
-	// Dial the remote process. The local address (second argument) can
-	// be nil, as the local port is chosen on the fly.
-	log.Println("Dial " + addr.String())
-	conn, err := net.DialTCP("tcp", nil, addr)
+// buffered ReadWriter.
+func Open(addr string) (*bufio.ReadWriter, error) {
+	// Dial the remote process.
+	// Note that the local port is chosen on the fly. If the local port
+	// must be a specific one, use DialTCP() instead.
+	log.Println("Dial " + addr)
+	conn, err := net.Dial("tcp", addr)
 	if err != nil {
-		return nil, errors.Wrap(err, "Dialing "+addr.String()+" failed")
+		return nil, errors.Wrap(err, "Dialing "+addr+" failed")
 	}
 	return bufio.NewReadWriter(bufio.NewReader(conn), bufio.NewWriter(conn)), nil
 }
@@ -262,50 +296,55 @@ func (e *Endpoint) AddHandleFunc(name string, f HandleFunc) {
 // through AddHandleFunc() before.
 func (e *Endpoint) Listen() error {
 	var err error
-	e.listener, err = net.Listen("tcp", ":"+strconv.Itoa(Port))
+	e.listener, err = net.Listen("tcp", Port)
 	if err != nil {
 		return errors.Wrap(err, "Unable to listen on "+e.listener.Addr().String()+"\n")
 	}
 	log.Println("Listen on", e.listener.Addr().String())
 	for {
-		log.Println("Accept a request.")
+		log.Println("Accept a connection request.")
 		conn, err := e.listener.Accept()
 		if err != nil {
 			log.Println("Failed accepting a connection request:", err)
 			continue
 		}
-		log.Println("Dispatch a request.")
-		go e.dispatch(conn)
+		log.Println("Handle incoming messages.")
+		go e.handleMessages(conn)
 	}
 }
 
 // dispatch reads the connection up to the first newline.
 // Based on this string, it calls the appropriate HandlerFunc.
-func (e *Endpoint) dispatch(conn net.Conn) {
-	// Close the connection when the handler func finishes
-	// or when an error occurs.
-	defer func() { _ = conn.Close() }()
-
+func (e *Endpoint) handleMessages(conn net.Conn) {
 	// Wrap the connection into a buffered reader for easier reading.
 	rw := bufio.NewReadWriter(bufio.NewReader(conn), bufio.NewWriter(conn))
-	// Read the request.
-	log.Print("Receive request '")
-	request, err := rw.ReadString('\n')
-	if err != nil {
-		log.Println("\nError reading command. Got: '"+request+"'\n", err)
-		return
+	defer conn.Close()
+
+	// Read from the connection until EOF. Expect a command name as the
+	// next input. Call the handler that is registered for this command.
+	for {
+		log.Print("Receive command '")
+		cmd, err := rw.ReadString('\n')
+		switch {
+		case err == io.EOF:
+			log.Println("Reached EOF - close this connection.")
+			return
+		case err != nil:
+			log.Println("\nError reading command. Got: '"+cmd+"'\n", err)
+			return
+		}
+		// Trim the request string - ReadString does not strip any newlines.
+		cmd = strings.Trim(cmd, "\n ")
+		log.Println(cmd + "'")
+
+		// Fetch the appropriate handler function from the 'handler' map and call it.
+		handleCommand, ok := e.handler[cmd]
+		if !ok {
+			log.Println("Command '" + cmd + "' is not registered.")
+			return
+		}
+		handleCommand(rw)
 	}
-	// Important step: trim the request string - ReadString does not strip
-	// any newlines.
-	request = strings.Trim(request, "\n ")
-	log.Println(request + "'")
-	// Call the appropriate handler function.
-	hfunc, ok := e.handler[request]
-	if !ok {
-		log.Println("Request '" + request + "' does not match any registered handler.")
-		return
-	}
-	hfunc(rw)
 }
 
 /* Now let's create two handler functions. The easiest case is where our
@@ -322,6 +361,7 @@ func handleStrings(rw *bufio.ReadWriter) {
 	if err != nil {
 		log.Println("Cannot read from connection.\n", err)
 	}
+	s = strings.Trim(s, "\n ")
 	log.Println(s)
 	_, err = rw.WriteString("Thank you.\n")
 	if err != nil {
@@ -345,7 +385,10 @@ func handleGob(rw *bufio.ReadWriter) {
 		log.Println("Error decoding GOB data:", err)
 		return
 	}
-	log.Printf("\n%#v\n", data)
+	// Print the complexData struct and the nested one, too, to prove
+	// that both travelled across the wire.
+	log.Printf("Outer complexData struct: \n%#v\n", data)
+	log.Printf("Inner complexData struct: \n%#v\n", data.C)
 }
 
 /* With all this in place, we can now set up client and server functions.
@@ -357,23 +400,24 @@ The server starts listening for requests and triggers the appropriate handlers.
 
 // client is called if the app is called with -connect=`ip addr`.
 func client(ip string) error {
-	// Some test data.
+	// Some test data. Note how GOB even handles maps, slices, and
+	// recursive data structures without problems.
 	testStruct := complexData{
 		N: 23,
 		S: "string data",
 		M: map[string]int{"one": 1, "two": 2, "three": 3},
-	}
-
-	// Create a TCPAddr from the ip string passed as -connect flag.
-	addr, err := net.ResolveTCPAddr("tcp", ip+":"+strconv.Itoa(Port))
-	if err != nil {
-		return errors.Wrap(err, "Client: Cannot resolve address "+ip+"\n")
+		P: []byte("abc"),
+		C: &complexData{
+			N: 256,
+			S: "Recursive structs? Piece of cake!",
+			M: map[string]int{"01": 1, "10": 2, "11": 3},
+		},
 	}
 
 	// Open a connection to the server.
-	rw, err := Open(addr)
+	rw, err := Open(ip + Port)
 	if err != nil {
-		return errors.Wrap(err, "Client: Failed to open connection to "+addr.String())
+		return errors.Wrap(err, "Client: Failed to open connection to "+ip+Port)
 	}
 
 	// Send a STRING request.
@@ -407,7 +451,9 @@ func client(ip string) error {
 	// Create an encoder that directly transmits to `rw`.
 	// Send the request name.
 	// Send the GOB.
-	log.Println("Send a struct as GOB.")
+	log.Println("Send a struct as GOB:")
+	log.Printf("Outer complexData struct: \n%#v\n", testStruct)
+	log.Printf("Inner complexData struct: \n%#v\n", testStruct.C)
 	enc := gob.NewEncoder(rw)
 	n, err = rw.WriteString("GOB\n")
 	if err != nil {
@@ -461,6 +507,7 @@ func main() {
 	log.Println("Server done.")
 }
 
+// The Lshortfile flag includes file name and line number in log messages.
 func init() {
 	log.SetFlags(log.Lshortfile)
 }
