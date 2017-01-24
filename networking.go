@@ -19,8 +19,8 @@ title = "TCP/IP Networking"
 description = "How to communicate at TCP/IP level in Go"
 author = "Christoph Berger"
 email = "chris@appliedgo.net"
-date = "2017-01-24"
-publishdate = "2017-01-24"
+date = "2017-01-25"
+publishdate = "2017-01-25"
 draft = "true"
 domains = ["Distributed Computing"]
 tags = ["network", "tcp"]
@@ -34,9 +34,9 @@ it is easier as one might think.
 
 While preparing another blog post, I realized that the networking part of the
 code was quickly becoming larger than the part of the code that was meant to
-illustrate the topic of the post. Furthermore, networking in Go at TCP/IP
-level feels a little underrepresented in the Go blog space (but I might be
-wrong).
+illustrate the topic of the post. So I decided to write one blog post
+entirely about how to send data from process A to process B over a plain
+TCP/IP connection.
 
 ## Who needs sending things at TCP/IP level?
 
@@ -565,6 +565,18 @@ Step 4. Open another shell, `cd` to the source code (see Step 2), and
 run the client.
 
     go run networking.go -connect localhost
+
+## Links
+
+This turned into quite a long blog post, so if you are looking for something
+shorter, here is a blog post that is really just the essence of the above, and
+it is just sending strings. No gobs, and no fancy "command/data" constructs.
+
+[A Simple Go TCP Server and TCP Client](https://systembash.com/a-simple-go-tcp-server-and-tcp-client/)
+
+More about the `gob` package:
+
+[Gobs of data](https://blog.golang.org/gobs-of-data)
 
 
 Happy coding!
