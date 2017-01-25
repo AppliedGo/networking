@@ -50,11 +50,6 @@ However, in some situations--especially with small projects--, any approach
 you choose may look like completely oversized, not to mention the additional
 package dependencies that you'd have to introduce.
 
-import (
-	"time"
-	"time"
-)
-
 Luckily, creating simple network communication with
 [the standard `net` package](https://golang.org/pkg/net/)
 is not as difficult as it may seem.
