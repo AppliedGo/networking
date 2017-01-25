@@ -50,6 +50,11 @@ However, in some situations--especially with small projects--, any approach
 you choose may look like completely oversized, not to mention the additional
 package dependencies that you'd have to introduce.
 
+import (
+	"time"
+	"time"
+)
+
 Luckily, creating simple network communication with
 [the standard `net` package](https://golang.org/pkg/net/)
 is not as difficult as it may seem.
@@ -67,9 +72,8 @@ TCP connection. That's nice but what about complex data types? Structs and such?
 
 ## Simplification #2: Go knows how to encode complex types efficiently
 
-*(Fun fact: About every other time I review this text on the rendered Web page,
-I misread the title as "God knows...".
-So if this just happened to you, you are not alone :-)*
+*(Did you also just read "God knows..."? I think it happens to me almost every
+other time I read this text.)*
 
 When it comes to encoding structured data for sending over the net, JSON comes
 readily to mind. But wait - Go's standard `encoding/gob` package provides
@@ -82,9 +86,10 @@ nicely into our simplification #1 - connections are `io` streams.
 
 Let's put this all together in a small sample app.
 
-## Goal
 
-The sample app shall do two things:
+## The sample app's goal
+
+The app shall do two things:
 
 1. Send and receive a simple message as a string
 2. Send and receive a `struct` via GOB
@@ -96,9 +101,13 @@ The second part goes a step further and sends a complete struct over the
 network, with strings, slices, maps, and even a recursive pointer to the
 struct itself.
 
-Thanks to the `gob` package, this requires no efforts.
+Thanks to the `gob` package, this requires no efforts. The following
+animation shows how gob data gets from a client to a server, and when
+this looks quite unspectacular, it's because using `gob` *is* unspectacular.
 
 HYPE[Sending a struct as GOB](gob.html)
+
+It's not much more than that!
 
 
 ## Basic ingredients for sending string data over TCP
@@ -219,7 +228,7 @@ and how to process the data.
 
 To achieve this, the server code takes a two-step approach.
 
-Step 1: When the `Listen()`` function accepts a new connection, it spawns
+Step 1: When the `Listen()` function accepts a new connection, it spawns
 a new goroutine that calls function `handleMessage()`. This function reads
 the command name from the connection, looks up the appropriate handler
 function from a map, and calls this function.
@@ -586,6 +595,17 @@ run the client.
 
     go run networking.go -connect localhost
 
+
+## Tips
+
+If you want to tinker with the code a bit, here are some suggestions:
+
+* Try running client and server on different machines (in the same local network).
+* Beef up the complexData type with more maps and pointers and see how `gob`
+  copes with it.
+* Start several clients at the same time and see if the server can handle them.
+
+
 ## Links
 
 This turned into quite a long blog post, so if you are looking for something
@@ -598,7 +618,6 @@ More about the `gob` package:
 
 * [Gobs of data](https://blog.golang.org/gobs-of-data)
 
-
-Happy coding!
+**Happy coding!**
 
 */
