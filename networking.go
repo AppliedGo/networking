@@ -21,9 +21,9 @@ author = "Christoph Berger"
 email = "chris@appliedgo.net"
 date = "2017-01-25"
 publishdate = "2017-01-25"
-draft = "true"
+draft = "false"
 domains = ["Distributed Computing"]
-tags = ["network", "tcp"]
+tags = ["network", "tcp", "gob"]
 categories = ["Tutorial"]
 +++
 
@@ -74,7 +74,7 @@ So if this just happened to you, you are not alone :-)*
 When it comes to encoding structured data for sending over the net, JSON comes
 readily to mind. But wait - Go's standard `encoding/gob` package provides
 a way of serializing and deserializing Go data types without the need for
-adding string tags to structs, dealing with JSON/Go incompatibilites, or waiting
+adding string tags to structs, dealing with JSON/Go incompatibilities, or waiting
 for json.Unmarshal to laboriously parse text into binary data.
 
 Gob encoders and decoders work directly on `io` streams - and this fits just
@@ -94,11 +94,12 @@ to send data over a TCP/IP network without any higher-level protocols.
 
 The second part goes a step further and sends a complete struct over the
 network, with strings, slices, maps, and even a recursive pointer to the
-struct itself:
+struct itself.
+
+Thanks to the `gob` package, this requires no efforts.
 
 HYPE[Sending a struct as GOB](gob.html)
 
-The `gob` package makes this as easy as pie.
 
 ## Basic ingredients for sending string data over TCP
 
@@ -188,7 +189,7 @@ real network card.
 A listener's `Accept()` method waits until a connection request comes in.
 Then it accepts the request and returns the new connection to the caller.
 `Accept()` is typically called within a loop to be able to serve multiple
-connnections simultaneously. Each connection can be handled by a goroutine,
+connections simultaneously. Each connection can be handled by a goroutine,
 as we will see in the code.
 
 
@@ -211,8 +212,27 @@ running the code, the `gob` package moves all this through our network
 connection without any fuss.
 
 
+What we basically have here is some sort of ad-hoc protocol, where the client
+and the server agree that a command is a string followed by a newline followed
+by some data. For each command, the server must know the exact data format
+and how to process the data.
 
+To achieve this, the server code takes a two-step approach.
 
+Step 1: When the `Listen()`` function accepts a new connection, it spawns
+a new goroutine that calls function `handleMessage()`. This function reads
+the command name from the connection, looks up the appropriate handler
+function from a map, and calls this function.
+
+Step 2: The selected handler function reads and processes the command's data.
+
+Here is a visual summary of this process.
+
+HYPE[Server Command Dispatch](tcpserver.html)
+
+Keep these pictures in mind, they help reading the actual code.
+
+## The Code
 */
 
 // ## Imports and globals
@@ -345,7 +365,7 @@ func (e *Endpoint) handleMessages(conn net.Conn) {
 		cmd, err := rw.ReadString('\n')
 		switch {
 		case err == io.EOF:
-			log.Println("Reached EOF - close this connection.")
+			log.Println("Reached EOF - close this connection.\n   ---")
 			return
 		case err != nil:
 			log.Println("\nError reading command. Got: '"+cmd+"'\n", err)
@@ -546,7 +566,7 @@ func init() {
 }
 
 /*
-## How to get and run the codes
+## How to get and run the code
 
 Step 1: `go get` the code. Note the `-d` flag that prevents auto-installing
 the binary into `$GOPATH/bin`.
@@ -572,11 +592,11 @@ This turned into quite a long blog post, so if you are looking for something
 shorter, here is a blog post that is really just the essence of the above, and
 it is just sending strings. No gobs, and no fancy "command/data" constructs.
 
-[A Simple Go TCP Server and TCP Client](https://systembash.com/a-simple-go-tcp-server-and-tcp-client/)
+* [A Simple Go TCP Server and TCP Client](https://systembash.com/a-simple-go-tcp-server-and-tcp-client/)
 
 More about the `gob` package:
 
-[Gobs of data](https://blog.golang.org/gobs-of-data)
+* [Gobs of data](https://blog.golang.org/gobs-of-data)
 
 
 Happy coding!
