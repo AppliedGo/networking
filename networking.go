@@ -249,6 +249,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/pkg/errors"
 
@@ -317,6 +318,9 @@ type HandleFunc func(*bufio.ReadWriter)
 type Endpoint struct {
 	listener net.Listener
 	handler  map[string]HandleFunc
+
+	// Maps are not threadsafe, so we need a mutex to control access.
+	m sync.RWMutex
 }
 
 // NewEndpoint creates a new endpoint. Too keep things simple,
@@ -330,7 +334,9 @@ func NewEndpoint() *Endpoint {
 
 // AddHandleFunc adds a new function for handling incoming data.
 func (e *Endpoint) AddHandleFunc(name string, f HandleFunc) {
+	e.m.Lock()
 	e.handler[name] = f
+	e.m.Unlock()
 }
 
 // Listen starts listening on the endpoint port on all interfaces.
@@ -380,7 +386,9 @@ func (e *Endpoint) handleMessages(conn net.Conn) {
 		log.Println(cmd + "'")
 
 		// Fetch the appropriate handler function from the 'handler' map and call it.
+		e.m.RLock()
 		handleCommand, ok := e.handler[cmd]
+		e.m.RUnlock()
 		if !ok {
 			log.Println("Command '" + cmd + "' is not registered.")
 			return
@@ -614,5 +622,12 @@ More about the `gob` package:
 * [Gobs of data](https://blog.golang.org/gobs-of-data)
 
 **Happy coding!**
+
+- - -
+
+Errata
+
+2017-02-09 - Map access: Maps are not thread-safe and thus if a map is used in
+different goroutines, a mutex should always control access to a map. In the given code, the map is updated before the goroutine starts, so mutexes were not necessary. Nevertheless, I now added one, so you can now safely modify the code and call AddHandleFunc() while the handleMessages goroutine is already running.
 
 */
