@@ -587,7 +587,7 @@ the binary into `$GOPATH/bin`.
 
 Step 2: `cd` to the source code directory.
 
-    cd $GOPATH/github.com/appliedgo/networking
+    cd $GOPATH/src/github.com/appliedgo/networking
 
 Step 3. Run the server.
 
