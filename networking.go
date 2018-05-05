@@ -346,7 +346,7 @@ func (e *Endpoint) Listen() error {
 	var err error
 	e.listener, err = net.Listen("tcp", Port)
 	if err != nil {
-		return errors.Wrap(err, "Unable to listen on "+e.listener.Addr().String()+"\n")
+		return errors.Wrapf(err, "Unable to listen on port %s\n", Port)
 	}
 	log.Println("Listen on", e.listener.Addr().String())
 	for {
