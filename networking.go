@@ -272,7 +272,7 @@ const (
 )
 
 /*
-## Outcoing connections
+## Outgoing connections
 
 Using an outgoing connection is a snap. A `net.Conn` satisfies the io.Reader
 and `io.Writer` interfaces, so we can treat a TCP connection just like any other
