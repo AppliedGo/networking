@@ -28,7 +28,7 @@ categories = ["Tutorial"]
 +++
 
 Connecting two processes at TCP/IP level might seem scary at first, but in Go
-it is easier as one might think.
+it is easier than one might think.
 
 <!--more-->
 
@@ -46,7 +46,7 @@ And there are already plenty to choose from, depending on the needs:
 Message queue protocols, gRPC, protobuf, FlatBuffers, RESTful Web API's,
 WebSockets, and so on.
 
-However, in some situations--especially with small projects--, any approach
+However, in some situations (especially with small projects), any approach
 you choose may look like completely oversized, not to mention the additional
 package dependencies that you'd have to introduce.
 
@@ -89,7 +89,7 @@ The app shall do two things:
 1. Send and receive a simple message as a string
 2. Send and receive a `struct` via GOB
 
-The first part--sending simple strings--shall demonstrate how easy it is
+The first part, sending simple strings, shall demonstrate how easy it is
 to send data over a TCP/IP network without any higher-level protocols.
 
 The second part goes a step further and sends a complete struct over the
@@ -128,8 +128,8 @@ attempt fails).
 
 If we don't need much fine-grained control over the Dial settings, we can use
 `net.Dial()` instead. This function takes an address string directly and
-returns a general `net.Conn` object. This is sufficient for our test case;
-however, if you need functionality that is only available on TCP connections,
+returns a general `net.Conn` object. This is sufficient for our test case.
+However, if you need functionality that is only available on TCP connections,
 you have to use the "TCP" variants (`DialTCP`, `TCPConn`, `TCPAddr`, etc).
 
 After successful dialing, we can treat the new connection like any other
@@ -151,10 +151,10 @@ A couple of tuning options are also available. Some examples:
 The `Dialer` interface provides these options (among others):
 
 * `DeadLine` and `Timeout` options for timing out an unsuccessful dial;
-* a `KeepAlive` option for managing the life span of the connection
+* `KeepAlive` option for managing the life span of the connection
 
 The `Conn` interface also has deadline settings; either for the connection as
-a whole (`SetDeadLine()`) or specific to read or write calls (`SetReadDeadLine()`
+a whole (`SetDeadLine()`), or specific to read or write calls (`SetReadDeadLine()`
 and `SetWriteDeadLine()`).
 
 Note that the deadlines are fixed points in (wallclock) time. Unlike timeouts,
@@ -185,7 +185,7 @@ and a WHOIS server uses port 43.
 The core parts of the `net` package for implementing the server side are:
 
 `net.Listen()` creates a new listener on a given local network address. If
-only a port ist passed, as in ":61000", then the listener listens on
+only a port is passed, as in ":61000", then the listener listens on
 all available network interfaces. This is quite handy, as a computer usually
 has at least two active interfaces, the loopback interface and at least one
 real network card.
@@ -201,7 +201,7 @@ as we will see in the code.
 
 Instead of just pushing a few bytes around, I wanted the code to demonstrate
 something more useful. I want to be able to send different commands with
-different data payload to the server. The server shall identify each
+a different data payload to the server. The server shall identify each
 command and decode the command's data.
 
 So the client in the code below sends two test commands: "STRING" and "GOB".
@@ -323,7 +323,7 @@ type Endpoint struct {
 	m sync.RWMutex
 }
 
-// NewEndpoint creates a new endpoint. Too keep things simple,
+// NewEndpoint creates a new endpoint. To keep things simple,
 // the endpoint listens on a fixed port number.
 func NewEndpoint() *Endpoint {
 	// Create a new Endpoint with an empty list of handler funcs.
@@ -400,7 +400,7 @@ func (e *Endpoint) handleMessages(conn net.Conn) {
 /* Now let's create two handler functions. The easiest case is where our
 ad-hoc protocol only sends string data.
 
-The second handler receives and processes a struct that was send as GOB data.
+The second handler receives and processes a struct that was sent as GOB data.
 */
 
 // handleStrings handles the "STRING" request.
