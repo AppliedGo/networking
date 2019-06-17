@@ -22,9 +22,9 @@ email = "chris@appliedgo.net"
 date = "2017-01-25"
 publishdate = "2017-01-25"
 draft = "false"
-domains = ["Distributed Computing"]
+categories = ["Distributed Computing"]
 tags = ["network", "tcp", "gob"]
-categories = ["Tutorial"]
+articletypes = ["Tutorial"]
 +++
 
 Connecting two processes at TCP/IP level might seem scary at first, but in Go
